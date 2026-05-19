@@ -11,6 +11,7 @@ import {
   Alert
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import BackgroundLogger from './modules/background-logger';
 
 const { AuthNavigationModule: NativeAuthModule } = NativeModules;
 
@@ -32,7 +33,7 @@ interface LogEntry {
   message: string;
 }
 
-const SESSION_DURATION_MS = 5 * 60 * 1000;
+const SESSION_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const STORAGE_USERS_KEY = '@registered_users';
 const STORAGE_SESSION_KEY = '@auth_session';
 
@@ -42,12 +43,15 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(0); // in seconds
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  
+  // Native Background logs (timestamps saved every 10s)
+  const [bgLogs, setBgLogs] = useState<string[]>([]);
 
   // Helper to add system logs for display
   const addLog = (message: string) => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setLogs(prev => [{ id: Math.random().toString(), time: timeStr, message }, ...prev]);
+    setLogs(prev => [{ id: Math.random().toString(), time: timeStr, message }, ...prev].slice(0, 30));
   };
 
   // 2. Load persistent data from AsyncStorage on startup
@@ -96,7 +100,47 @@ export default function App() {
     initializeData();
   }, []);
 
-  // 3. Keep timer running and check session expiry
+  // 3. Setup event listener for Expo Module background task logged time events
+  useEffect(() => {
+    const subscription = BackgroundLogger.addListener('onTimeLogged', (event: { time: string }) => {
+      setBgLogs(prev => [event.time, ...prev]);
+      addLog(`Background Task: Saved current time: ${event.time}`);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // 4. Start/Stop native background task based on session status (using Expo Module API)
+  useEffect(() => {
+    const toggleBackgroundService = async () => {
+      if (session) {
+        addLog('Starting Expo Module background task (10s logger)...');
+        try {
+          await BackgroundLogger.startBackgroundService();
+          
+          // Fetch any existing saved logs from native SharedPreferences via Expo Module
+          const storedBgLogs = await BackgroundLogger.getBackgroundLogs();
+          setBgLogs(JSON.parse(storedBgLogs));
+        } catch (error: any) {
+          addLog(`Error starting background task: ${error.message}`);
+        }
+      } else {
+        addLog('Stopping Expo Module background task...');
+        try {
+          await BackgroundLogger.stopBackgroundService();
+          setBgLogs([]); // Clear logs on logout
+        } catch (error: any) {
+          addLog(`Error stopping background task: ${error.message}`);
+        }
+      }
+    };
+
+    toggleBackgroundService();
+  }, [session]);
+
+  // 5. Keep timer running and check session expiry
   useEffect(() => {
     if (!session) {
       setTimeLeft(0);
@@ -112,7 +156,7 @@ export default function App() {
         setSession(null);
         await AsyncStorage.removeItem(STORAGE_SESSION_KEY);
         addLog(`Session for ${session.email} expired automatically!`);
-        Alert.alert('Session Expired', 'Your 30-minute session has ended. You have been logged out.');
+        Alert.alert('Session Expired', 'Your session has ended. You have been logged out.');
         clearInterval(interval);
       } else {
         setTimeLeft(Math.ceil(remainingMs / 1000));
@@ -122,7 +166,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [session]);
 
-  // 4. Auth Actions
+  // 6. Auth Actions
   const handleOpenLogin = async () => {
     addLog('Calling Native Login Bridge...');
     try {
@@ -237,6 +281,17 @@ export default function App() {
     Alert.alert('Cleared', 'Database has been fully reset.');
   };
 
+  // Clear native background task logs via Expo Module
+  const handleClearBgLogs = async () => {
+    try {
+      await BackgroundLogger.clearBackgroundLogs();
+      setBgLogs([]);
+      addLog('Cleared native background time logs via Expo Module.');
+    } catch (e: any) {
+      addLog(`Error clearing background logs: ${e.message}`);
+    }
+  };
+
   // Format countdown text (MM:SS)
   const formatCountdown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -249,14 +304,14 @@ export default function App() {
       <StatusBar style="dark" />
       <View style={styles.appHeader}>
         <Text style={styles.appTitle}>SecureAuth Portal</Text>
-        <Text style={styles.appSubtitle}>stateless native screens + AsyncStorage in JS</Text>
+        <Text style={styles.appSubtitle}>stateless native screens + Expo Module background task</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         
         {/* SECTION 1: AUTH STATUS */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeader}>Authentication Status</Text>
+          <Text style={styles.sectionHeader}>1. Authentication Status</Text>
 
           {session ? (
             <View style={styles.authBox}>
@@ -268,7 +323,7 @@ export default function App() {
                 <Text style={[styles.timerCountdown, timeLeft < 60 && styles.textRed]}>
                   {formatCountdown(timeLeft)}
                 </Text>
-                <Text style={styles.timerHelper}>Session expires automatically after 30 minutes.</Text>
+                <Text style={styles.timerHelper}>Session expires automatically after 5 minutes.</Text>
               </View>
 
               <View style={styles.actionRow}>
@@ -296,9 +351,36 @@ export default function App() {
           )}
         </View>
 
-        {/* SECTION 2: REGISTERED USERS */}
+        {/* SECTION 2: NATIVE BACKGROUND TIMELOGS */}
+        {session && (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionHeader}>2. Native Background Logs (Expo Module - Every 10s)</Text>
+            
+            <View style={styles.bgLogsBox}>
+              {bgLogs.length === 0 ? (
+                <Text style={styles.noUsersText}>Waiting for first 10s background log tick...</Text>
+              ) : (
+                <ScrollView nestedScrollEnabled style={{ maxHeight: 120 }}>
+                  {bgLogs.map((logTime, index) => (
+                    <View key={index} style={styles.bgLogItemRow}>
+                      <Text style={styles.bgLogBullet}>⏱️</Text>
+                      <Text style={styles.bgLogTime}>{logTime}</Text>
+                      <Text style={styles.bgLogDesc}>- Saved to SharedPreferences & Emitted</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+
+            <TouchableOpacity style={[styles.buttonSmall, styles.buttonSmallRed, { marginTop: 8 }]} onPress={handleClearBgLogs}>
+              <Text style={styles.buttonSmallText}>Clear Background Time Logs</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* SECTION 3: REGISTERED USERS */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeader}>Registered Users (Stored in AsyncStorage)</Text>
+          <Text style={styles.sectionHeader}>{session ? '3' : '2'}. Registered Users (AsyncStorage)</Text>
           
           <View style={styles.databaseBox}>
             {registeredUsers.length === 0 ? (
@@ -318,21 +400,21 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        {/* SECTION 3: SYSTEM CONSOLE LOGS */}
+        {/* SECTION 4: SYSTEM CONSOLE LOGS */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionHeader}>Console Logs (Trace actions)</Text>
+          <Text style={styles.sectionHeader}>{session ? '4' : '3'}. Console Logs (Trace actions)</Text>
           <View style={styles.logsBox}>
-            <ScrollView nestedScrollEnabled>
-            {logs.length === 0 ? (
-              <Text style={styles.noUsersText}>No actions traced yet.</Text>
-            ) : (
-              logs.map(log => (
-                <View key={log.id} style={styles.logItem}>
-                  <Text style={styles.logTime}>[{log.time}]</Text>
-                  <Text style={styles.logText}>{log.message}</Text>
-                </View>
-              ))
-            )}
+            <ScrollView nestedScrollEnabled style={{ maxHeight: 150 }}>
+              {logs.length === 0 ? (
+                <Text style={styles.noUsersText}>No actions traced yet.</Text>
+              ) : (
+                logs.map(log => (
+                  <View key={log.id} style={styles.logItem}>
+                    <Text style={styles.logTime}>[{log.time}]</Text>
+                    <Text style={styles.logText}>{log.message}</Text>
+                  </View>
+                ))
+              )}
             </ScrollView>
           </View>
         </View>
@@ -475,6 +557,35 @@ const styles = StyleSheet.create({
     borderColor: '#F3F4F6',
     marginBottom: 12,
   },
+  bgLogsBox: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 6,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  bgLogItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  bgLogBullet: {
+    marginRight: 6,
+    fontSize: 12,
+  },
+  bgLogTime: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#10B981',
+    fontFamily: 'monospace',
+  },
+  bgLogDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginLeft: 6,
+  },
   userItemRow: {
     paddingVertical: 8,
     borderBottomWidth: 1,
@@ -519,7 +630,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1F2937',
     borderRadius: 6,
     padding: 10,
-    maxHeight: 150,
   },
   logItem: {
     flexDirection: 'row',
