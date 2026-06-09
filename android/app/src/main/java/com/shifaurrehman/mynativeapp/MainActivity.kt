@@ -7,6 +7,7 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
 
 import expo.modules.ReactActivityDelegateWrapper
 
@@ -16,6 +17,8 @@ class MainActivity : ReactActivity() {
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
+    // Required for react-native-screens
+    supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
     super.onCreate(null)
   }
 

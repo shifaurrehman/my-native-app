@@ -38,5 +38,6 @@ yarn-error.*
 
 # Local Modules
 modules/*/android/build/
+modules/*/android/.gradle/
 
 

@@ -1,44 +1,12 @@
-import { useColorScheme } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { useColorScheme } from "react-native";
+import { COLORS, ColorTheme } from "../constants/colors";
 
-export type ThemeType = 'light' | 'dark';
-
-export const useThemeMode = () => {
-  const systemScheme = useColorScheme();
-  const [theme, setTheme] = useState<ThemeType>(
-    systemScheme === 'dark' ? 'dark' : 'light'
-  );
-  const [isSystemDefault, setIsSystemDefault] = useState(true);
-
-  // Sync with system theme on change, if user hasn't manually overridden it
-  useEffect(() => {
-    if (isSystemDefault && systemScheme) {
-      setTheme(systemScheme);
-    }
-  }, [systemScheme, isSystemDefault]);
-
-  const toggleTheme = useCallback(() => {
-    setIsSystemDefault(false);
-    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
-  }, []);
-
-  const setManualTheme = useCallback((newTheme: ThemeType) => {
-    setIsSystemDefault(false);
-    setTheme(newTheme);
-  }, []);
-
-  const resetToSystem = useCallback(() => {
-    setIsSystemDefault(true);
-    if (systemScheme) {
-      setTheme(systemScheme);
-    }
-  }, [systemScheme]);
-
+export const useTheme = (): ColorTheme & { isDark: boolean } => {
+  const scheme = useColorScheme();
+  const isDark = scheme === "dark";
+  const theme = isDark ? COLORS.dark : COLORS.light;
   return {
-    theme,
-    isSystemDefault,
-    toggleTheme,
-    setManualTheme,
-    resetToSystem,
+    ...theme,
+    isDark,
   };
 };
